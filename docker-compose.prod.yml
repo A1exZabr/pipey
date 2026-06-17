@@ -1,0 +1,209 @@
+# =============================================================================
+# Pipey CRM - Production Docker Compose
+# =============================================================================
+#
+# SETUP CHECKLIST:
+#
+# 1. Copy backend/.env.example to .env and fill in all values
+# 2. Start core services:
+#    docker compose -f docker-compose.prod.yml up -d
+# 3. Obtain SSL certificate:
+#    docker compose -f docker-compose.prod.yml run --rm certbot certonly \
+#      --webroot -w /var/www/certbot -d YOUR_DOMAIN --agree-tos -m YOUR_EMAIL
+# 4. Restart nginx to pick up certs:
+#    docker compose -f docker-compose.prod.yml restart nginx
+# 5. Start monitoring (optional):
+#    docker compose -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d
+# 6. Start GlitchTip error tracking (optional, ~512 MB RAM):
+#    docker compose -f docker-compose.prod.yml -f docker-compose.sentry.yml up -d
+#    Then open http://localhost:8000, create project, copy DSN to .env
+#
+# AUTO-RENEWAL (add to crontab):
+#   0 0 1 */2 * cd /path/to/pipey && docker compose run --rm certbot renew \
+#     && docker compose exec nginx nginx -s reload
+#
+# =============================================================================
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: pipey-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pipey
+      POSTGRES_PASSWORD: pipey_dev_password
+      POSTGRES_DB: pipey_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipey"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipey-network
+
+  # Redis for queues and cache
+  redis:
+    image: redis:7-alpine
+    container_name: pipey-redis-prod
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_prod:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipey-network
+
+  # MinIO for file storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: pipey-minio-prod
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: pipey
+      MINIO_ROOT_PASSWORD: pipey_dev_password
+    volumes:
+      - minio_data_prod:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - pipey-network
+
+  # Backend NestJS service (production build)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pipey-backend-prod
+    restart: unless-stopped
+    # Port exposed internally only -- nginx proxies external traffic
+    expose:
+      - "3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://pipey:pipey_dev_password@postgres:5432/pipey_db
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: pipey
+      MINIO_SECRET_KEY: pipey_dev_password
+      MINIO_USE_SSL: "false"
+      FRONTEND_URL: http://localhost:3000
+      JWT_SECRET: your-secret-key-change-in-production-please
+      JWT_EXPIRES_IN: 7d
+      MAGIC_LINK_SECRET: your-magic-link-secret-change-in-production
+      MAGIC_LINK_EXPIRES_IN: 30d
+      ENCRYPTION_KEY: your-32-byte-encryption-key-here-change-this
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX_REQUESTS: 100
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-0.7.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - pipey-network
+
+  # Frontend Next.js application (production build)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pipey-frontend-prod
+    restart: unless-stopped
+    # Port exposed internally only -- nginx proxies external traffic
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://${DOMAIN:-localhost}
+      NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+      NEXT_PUBLIC_SENTRY_RELEASE: ${SENTRY_RELEASE:-0.7.0}
+    depends_on:
+      - backend
+    networks:
+      - pipey-network
+
+  # Nginx reverse proxy with TLS
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: pipey-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./docker/nginx/nginx-http-only.conf:/etc/nginx/nginx-http-only.conf:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    entrypoint: |
+      sh -c '
+        if [ -f /etc/letsencrypt/live/$${DOMAIN}/fullchain.pem ]; then
+          envsubst "$${DOMAIN}" < /etc/nginx/templates/default.conf.template > /etc/nginx/nginx.conf
+        else
+          cp /etc/nginx/nginx-http-only.conf /etc/nginx/nginx.conf
+        fi
+        nginx -g "daemon off;"
+      '
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - pipey-network
+
+  # Certbot for Let's Encrypt TLS certificates
+  certbot:
+    image: certbot/certbot:latest
+    container_name: pipey-certbot
+    restart: "no"
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    # Initial cert request (run manually):
+    #   docker compose run --rm certbot certonly --webroot \
+    #     -w /var/www/certbot -d your-domain.com --agree-tos -m your@email.com
+    #
+    # Auto-renewal (add to host crontab):
+    #   0 0 1 */2 * docker compose run --rm certbot renew && docker compose exec nginx nginx -s reload
+    entrypoint: "echo 'Certbot ready. Run: docker compose run --rm certbot certonly --webroot -w /var/www/certbot -d YOUR_DOMAIN --agree-tos -m YOUR_EMAIL'"
+    networks:
+      - pipey-network
+
+volumes:
+  postgres_data_prod:
+  redis_data_prod:
+  minio_data_prod:
+  certbot_webroot:
+  certbot_certs:
+
+networks:
+  pipey-network:
+    driver: bridge
