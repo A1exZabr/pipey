@@ -2,7 +2,7 @@
 
 > 🚧 **Early beta / work in progress.** This is an ambitious full-stack CRM built as a portfolio project. The architecture and core flows are in place, but it is NOT production-ready — see **Known Limitations** below.
 
-**Pipey** is a lightweight, multi-channel CRM. It brings conversations from Telegram, MAX, and Avito into a single inbox, links them to contacts and deals on a visual pipeline, and adds a layer of automation on top: AI reply suggestions, PDF quotes and invoices, a public booking page, and analytics. The frontend ships as a PWA with an experimental mobile build via Capacitor.
+**Pipey** is a lightweight messenger CRM. It brings conversations from Telegram into a single inbox, links them to contacts and deals on a visual pipeline, and adds a layer of automation on top: AI reply suggestions, PDF quotes and invoices, a public booking page, and analytics. The frontend ships as a PWA with an experimental mobile build via Capacitor.
 
 The product is built around one idea: connect a channel, see your conversations, take an action, and reply to the customer — without a steep learning curve.
 
@@ -13,7 +13,7 @@ The product is built around one idea: connect a channel, see your conversations,
 Pipey is honest about its current state. Before relying on it for anything serious, be aware that:
 
 - **No automated tests yet.** There is no meaningful test suite. Jest is configured in the backend, but there are zero `*.spec.ts` / test files in either `backend/` or `frontend/`. Treat all behavior as unverified.
-- **Channel integrations are uneven.** **Telegram is the most complete** path — incoming webhooks are processed end to end (contact upsert, conversation, message persistence). **MAX and Avito are partially stubbed:** their API clients (`MaxService`, `AvitoService`) and webhook controllers exist and enqueue jobs, but the queue worker handlers (`processMax`, `processAvito` in `queues/processors/webhook.processor.ts`) are placeholders that only log and do not yet persist messages.
+- **Telegram is the only finished channel.** Incoming Telegram webhooks are processed end to end (contact upsert, conversation, message persistence). The code also contains adapters for other messengers; their queue handlers in `queues/processors/webhook.processor.ts` are placeholders that only log, so treat them as unfinished.
 - **Email magic-link delivery is a TODO.** Authentication itself works (passwordless magic-link tokens are issued and verified), but actually **sending the email is stubbed** — in development the link is returned in the API response (`// TODO: Send email with magic link` in `auth/auth.service.ts`). There is no SMTP/email provider wired up.
 - **Observability is wired but not fully integrated.** Prometheus, Grafana, and Sentry/GlitchTip are defined in `docker-compose.monitoring.yml` / `docker-compose.sentry.yml`, and a `/metrics` endpoint plus a Sentry `instrument.ts` exist, but the dashboards, alerting, and end-to-end tracing are not finished. Sentry/GlitchTip is disabled unless `SENTRY_DSN` is set.
 - **The mobile (Capacitor) build is experimental and untested.** A `capacitor.config.ts` and `mobile:*` scripts exist and the app can be exported as a static bundle, but native iOS/Android builds have not been validated.
@@ -23,7 +23,7 @@ Pipey is honest about its current state. Before relying on it for anything serio
 
 ## Features
 
-- **Unified inbox** — one place for conversations across Telegram, MAX, and Avito.
+- **Unified inbox** — one place for your Telegram conversations, linked to contacts and deals.
 - **Contacts** — a lightweight contact database, automatically populated from incoming conversations and the booking form.
 - **Deals & pipeline** — a visual, customizable pipeline with stages; drag deals through your sales process.
 - **AI reply suggestions** — draft replies, suggested next actions (send quote, send invoice, send booking link, create deal, etc.), and conversation summaries, powered by [OpenRouter](https://openrouter.ai). The default product model is `anthropic/claude-3-haiku` with an automatic fallback model. When no API key is configured, the service degrades gracefully to mock responses.
@@ -41,9 +41,9 @@ Pipey is a monorepo with a NestJS backend and a Next.js frontend, backed by Post
 
 ```
                   ┌──────────────────────────────┐
-   Telegram ─────▶│                              │
-   MAX      ─────▶│   NestJS API (backend)       │
-   Avito    ─────▶│   webhooks → BullMQ queues   │
+                  │                              │
+   Telegram ─────▶│   NestJS API (backend)       │
+                  │   webhooks → BullMQ queues   │
                   │                              │
                   │   Auth · Channels · Inbox    │
                   │   Contacts · Deals/Pipeline  │
@@ -102,7 +102,7 @@ Pipey is a monorepo with a NestJS backend and a Next.js frontend, backed by Post
 cp .env.example .env
 ```
 
-Then edit `.env` and set real values — at minimum `POSTGRES_PASSWORD`, `JWT_SECRET`, `MAGIC_LINK_SECRET`, `ENCRYPTION_KEY`, and `MINIO_SECRET_KEY`. Channel tokens (`TELEGRAM_BOT_TOKEN`, `MAX_BOT_TOKEN`, `AVITO_CLIENT_ID` / `AVITO_CLIENT_SECRET`) and `OPENROUTER_API_KEY` are optional — the app runs without them, and AI features fall back to mock responses when no key is set.
+Then edit `.env` and set real values — at minimum `POSTGRES_PASSWORD`, `JWT_SECRET`, `MAGIC_LINK_SECRET`, `ENCRYPTION_KEY`, and `MINIO_SECRET_KEY`. The channel token (`TELEGRAM_BOT_TOKEN`) and `OPENROUTER_API_KEY` are optional — the app runs without them, and AI features fall back to mock responses when no key is set.
 
 ### 2. Run the full stack with Docker Compose (recommended)
 
@@ -193,7 +193,7 @@ pipey/
 │   ├── prisma/               # Prisma schema & migrations
 │   └── src/
 │       ├── auth/             # passwordless magic-link auth, JWT
-│       ├── channels/         # Telegram / MAX / Avito integrations
+│       ├── channels/         # messenger integrations
 │       ├── conversations/    # unified inbox
 │       ├── contacts/         # contact database
 │       ├── deals/            # deals

@@ -171,18 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 #### Integrations (Phase 1 completed)
-- **MAX Messenger**:
-  - Connect MAX bots by token
-  - Webhook for receiving incoming messages
-  - Sending outgoing messages
-  - Attachment support (files, stickers, voice messages)
-  - Automatic contact linking
-- **Avito**:
-  - OAuth authorization (client_id + client_secret)
-  - Webhook for receiving incoming messages
-  - Sending replies to clients
-  - Image and link support
-  - Automatic access token refresh
+- Adapters for additional messengers: incoming webhooks, outgoing replies, attachments and automatic contact linking (experimental, see Known Limitations in the README)
 
 #### Artifacts (Phase 2 — Documents)
 - **Quotes**:
@@ -220,7 +209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `DELETE /api/artifacts/:id` — deletion
 
 ### Changed
-- MAX and Avito integrations are now fully functional (were placeholders)
+- Additional messenger adapters moved from placeholders to experimental
 - Added a "Documents" item to the side navigation
 
 ---
@@ -260,7 +249,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - Sending outgoing messages
   - Saving attachments (photos, documents, voice messages, video)
   - Automatic contact linking by name/username
-- Prepared placeholders for MAX and Avito (coming soon)
+- Prepared placeholders for additional messengers (coming soon)
 
 #### Inbox
 - Unified interface for all communication channels
@@ -309,7 +298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Known limitations
 
 - The Telegram webhook requires ngrok in local development
-- MAX and Avito integrations are not yet implemented
+- Integrations beyond Telegram are not yet implemented
 - AI suggestions and auto-replies are in development
 - Email campaigns are not implemented
 
